@@ -1,0 +1,152 @@
+# GitHub Actions workflow that builds the .deb automatically
+# Fork the repo, add this file, and push to trigger a build.
+# The .deb will be available as a downloadable artifact.
+
+name: Build .deb Package
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential autoconf automake libtool pkg-config txt2man dpkg-dev
+
+      - name: Autoreconf
+        run: autoreconf -vfi
+
+      - name: Configure
+        run: ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var
+
+      - name: Build
+        run: make -j$(nproc)
+
+      - name: Create .deb staging directory
+        run: |
+          mkdir -p deb-staging/DEBIAN
+          mkdir -p deb-staging/usr/bin
+          mkdir -p deb-staging/etc
+          mkdir -p deb-staging/lib/systemd/system
+          mkdir -p deb-staging/usr/share/man/man1
+          mkdir -p deb-staging/usr/share/doc/proxifier
+
+      - name: Install to staging
+        run: make install DESTDIR=$(pwd)/deb-staging
+
+      - name: Generate man page
+        run: |
+          if [ -f doc/proxifier.txt ]; then
+            txt2man -t proxifier.1 -v "Proxifier-For-Linux-1.0" -s 1 -P Proxifier-For-Linux \
+              doc/proxifier.txt > deb-staging/usr/share/man/man1/proxifier.1 || true
+            gzip -n deb-staging/usr/share/man/man1/proxifier.1 || true
+          fi
+
+      - name: Copy documentation
+        run: |
+          cp COPYING deb-staging/usr/share/doc/proxifier/ 2>/dev/null || true
+          cp README.md deb-staging/usr/share/doc/proxifier/ 2>/dev/null || true
+          cp ChangeLog.md deb-staging/usr/share/doc/proxifier/ 2>/dev/null || true
+          gzip -n deb-staging/usr/share/doc/proxifier/ChangeLog.md 2>/dev/null || true
+
+      - name: Generate systemd service
+        run: |
+          sed "s|BINDIR|/usr/bin|g" service/proxifier._service > deb-staging/lib/systemd/system/proxifier.service
+
+      - name: Create control file
+        run: |
+          cat > deb-staging/DEBIAN/control << 'EOF'
+          Package: proxifier
+          Version: 1.0-1
+          Section: net
+          Priority: optional
+          Architecture: amd64
+          Depends: iptables, libc6 (>= 2.31)
+          Maintainer: Built from https://github.com/m0hithreddy/Proxifier-For-Linux
+          Description: Proxifier for Linux - tunnel system traffic through proxy
+           Proxifier acts as an intermediate between proxy servers and client
+           programs. It works through the proxy servers on behalf of other
+           programs, acting as a global point for configuring proxy rules which
+           will be applied to every program in the system.
+           .
+           Currently supports HTTP_PROXY.
+          Homepage: https://github.com/m0hithreddy/Proxifier-For-Linux
+          EOF
+
+      - name: Create maintainer scripts
+        run: |
+          cat > deb-staging/DEBIAN/postinst << 'EOF'
+          #!/bin/bash
+          set -e
+          if [ "$1" = "configure" ]; then
+              if command -v systemctl >/dev/null 2>&1; then
+                  systemctl daemon-reload
+              fi
+              if command -v ldconfig >/dev/null 2>&1; then
+                  ldconfig
+              fi
+          fi
+          exit 0
+          EOF
+          chmod 755 deb-staging/DEBIAN/postinst
+
+          cat > deb-staging/DEBIAN/prerm << 'EOF'
+          #!/bin/bash
+          set -e
+          if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+              if command -v systemctl >/dev/null 2>&1; then
+                  systemctl stop proxifier 2>/dev/null || true
+                  systemctl disable proxifier 2>/dev/null || true
+              fi
+          fi
+          exit 0
+          EOF
+          chmod 755 deb-staging/DEBIAN/prerm
+
+          cat > deb-staging/DEBIAN/postrm << 'EOF'
+          #!/bin/bash
+          set -e
+          if [ "$1" = "remove" ]; then
+              if command -v systemctl >/dev/null 2>&1; then
+                  systemctl daemon-reload
+              fi
+          fi
+          exit 0
+          EOF
+          chmod 755 deb-staging/DEBIAN/postrm
+
+          echo "/etc/proxifier.conf" > deb-staging/DEBIAN/conffiles
+
+      - name: Fix permissions
+        run: |
+          find deb-staging -type d -exec chmod 755 {} \;
+          find deb-staging -type f -exec chmod 644 {} \;
+          chmod 755 deb-staging/usr/bin/proxifier 2>/dev/null || true
+          chmod 755 deb-staging/DEBIAN/postinst deb-staging/DEBIAN/prerm deb-staging/DEBIAN/postrm
+
+      - name: Build .deb
+        run: |
+          dpkg-deb --build deb-staging proxifier_1.0-1_amd64.deb
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxifier-deb
+          path: proxifier_1.0-1_amd64.deb
+          retention-days: 90
+
+      - name: Show .deb info
+        run: |
+          ls -lh proxifier_1.0-1_amd64.deb
+          dpkg-deb --info proxifier_1.0-1_amd64.deb
+          dpkg-deb --contents proxifier_1.0-1_amd64.deb
