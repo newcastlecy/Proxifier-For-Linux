@@ -70,30 +70,29 @@ jobs:
           cp ChangeLog.md deb-staging/usr/share/doc/proxifier/ 2>/dev/null || true
           gzip -n deb-staging/usr/share/doc/proxifier/ChangeLog.md 2>/dev/null || true
 
-      - name: Generate systemd service
-        run: |
-          sed "s|BINDIR|/usr/bin|g" service/proxifier._service > deb-staging/lib/systemd/system/proxifier.service
-
       - name: Create control file
         run: |
           ARCH=$(dpkg-architecture -qDEB_HOST_ARCH)
-          cat > deb-staging/DEBIAN/control << EOF
-          Package: proxifier
-          Version: 1.0-1
-          Section: net
-          Priority: optional
-          Architecture: ${ARCH}
-          Depends: iptables, libc6 (>= 2.31)
-          Maintainer: Built from https://github.com/m0hithreddy/Proxifier-For-Linux
-          Description: Proxifier for Linux - tunnel system traffic through proxy
-           Proxifier acts as an intermediate between proxy servers and client
-           programs. It works through the proxy servers on behalf of other
-           programs, acting as a global point for configuring proxy rules which
-           will be applied to every program in the system.
-           .
-           Currently supports HTTP_PROXY.
-          Homepage: https://github.com/m0hithreddy/Proxifier-For-Linux
-          EOF
+          # Calculate installed size in KB
+          SIZE=$(du -sk deb-staging | cut -f1)
+          cat > deb-staging/DEBIAN/control << ENDOFCONTROL
+Package: proxifier
+Version: 1.0-1
+Section: net
+Priority: optional
+Architecture: ${ARCH}
+Installed-Size: ${SIZE}
+Depends: iptables, libc6 (>= 2.31)
+Maintainer: Proxifier-For-Linux <noreply@github.com>
+Description: Proxifier for Linux - tunnel system traffic through proxy
+ Proxifier acts as an intermediate between proxy servers and client
+ programs. It works through the proxy servers on behalf of other
+ programs, acting as a global point for configuring proxy rules which
+ will be applied to every program in the system.
+ .
+ Currently supports HTTP_PROXY.
+Homepage: https://github.com/m0hithreddy/Proxifier-For-Linux
+ENDOFCONTROL
 
       - name: Validate package
         run: |
@@ -106,61 +105,62 @@ jobs:
           echo "=== Files ==="
           find deb-staging -type f | sort
 
-      - name: Create maintainer scripts
+      - name: Create maintainer scripts and metadata
         run: |
-          cat > deb-staging/DEBIAN/postinst << 'EOF'
-          #!/bin/bash
-          set -e
-          if [ "$1" = "configure" ]; then
-              if command -v systemctl >/dev/null 2>&1; then
-                  systemctl daemon-reload
-              fi
-              if command -v ldconfig >/dev/null 2>&1; then
-                  ldconfig
-              fi
-          fi
-          exit 0
-          EOF
+          cat > deb-staging/DEBIAN/postinst << 'ENDOFSCRIPT'
+#!/bin/bash
+set -e
+if [ "$1" = "configure" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload
+    fi
+fi
+exit 0
+ENDOFSCRIPT
           chmod 755 deb-staging/DEBIAN/postinst
 
-          cat > deb-staging/DEBIAN/prerm << 'EOF'
-          #!/bin/bash
-          set -e
-          if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
-              if command -v systemctl >/dev/null 2>&1; then
-                  systemctl stop proxifier 2>/dev/null || true
-                  systemctl disable proxifier 2>/dev/null || true
-              fi
-          fi
-          exit 0
-          EOF
+          cat > deb-staging/DEBIAN/prerm << 'ENDOFSCRIPT'
+#!/bin/bash
+set -e
+if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop proxifier 2>/dev/null || true
+        systemctl disable proxifier 2>/dev/null || true
+    fi
+fi
+exit 0
+ENDOFSCRIPT
           chmod 755 deb-staging/DEBIAN/prerm
 
-          cat > deb-staging/DEBIAN/postrm << 'EOF'
-          #!/bin/bash
-          set -e
-          if [ "$1" = "remove" ]; then
-              if command -v systemctl >/dev/null 2>&1; then
-                  systemctl daemon-reload
-              fi
-          fi
-          exit 0
-          EOF
+          cat > deb-staging/DEBIAN/postrm << 'ENDOFSCRIPT'
+#!/bin/bash
+set -e
+if [ "$1" = "remove" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload
+    fi
+fi
+exit 0
+ENDOFSCRIPT
           chmod 755 deb-staging/DEBIAN/postrm
 
           echo "/etc/proxifier.conf" > deb-staging/DEBIAN/conffiles
 
-      - name: Fix permissions
+          # Generate md5sums
+          cd deb-staging && find . -type f ! -path './DEBIAN/*' -exec md5sum {} \; | sed 's| \./| |' > DEBIAN/md5sums && cd ..
+
+      - name: Fix permissions and ownership
         run: |
           find deb-staging -type d -exec chmod 755 {} \;
           find deb-staging -type f -exec chmod 644 {} \;
           chmod 755 deb-staging/usr/bin/proxifier 2>/dev/null || true
           chmod 755 deb-staging/DEBIAN/postinst deb-staging/DEBIAN/prerm deb-staging/DEBIAN/postrm
+          chmod 644 deb-staging/DEBIAN/control deb-staging/DEBIAN/conffiles deb-staging/DEBIAN/md5sums
 
       - name: Build .deb
         run: |
           ARCH=$(dpkg-architecture -qDEB_HOST_ARCH)
-          dpkg-deb --build deb-staging "proxifier_1.0-1_${ARCH}.deb"
+          dpkg-deb --root-owner-group --build deb-staging "proxifier_1.0-1_${ARCH}.deb"
 
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
