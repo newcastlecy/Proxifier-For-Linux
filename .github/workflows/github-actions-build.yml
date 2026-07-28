@@ -44,11 +44,22 @@ jobs:
       - name: Install to staging
         run: make install DESTDIR=$(pwd)/deb-staging
 
+      - name: Remove auto-generated service files and create correct one
+        run: |
+          # make install may generate service file with DESTDIR-prefixed path, remove it
+          rm -f deb-staging/usr/lib/systemd/system/proxifier.service
+          rm -f deb-staging/lib/systemd/system/proxifier.service
+          rm -rf deb-staging/usr/lib/systemd deb-staging/lib/systemd
+          mkdir -p deb-staging/lib/systemd/system
+          sed "s|BINDIR|/usr/bin|g" service/proxifier._service > deb-staging/lib/systemd/system/proxifier.service
+
       - name: Generate man page
         run: |
           if [ -f doc/proxifier.txt ]; then
             txt2man -t proxifier.1 -v "Proxifier-For-Linux-1.0" -s 1 -P Proxifier-For-Linux \
               doc/proxifier.txt > deb-staging/usr/share/man/man1/proxifier.1 || true
+            sed -i 's|/usr/local/etc/|/etc/|g; s|/usr/local/bin/|/usr/bin/|g; s|/usr/local/lib/systemd/|/lib/systemd/|g' \
+              deb-staging/usr/share/man/man1/proxifier.1 || true
             gzip -n deb-staging/usr/share/man/man1/proxifier.1 || true
           fi
 
@@ -65,12 +76,13 @@ jobs:
 
       - name: Create control file
         run: |
-          cat > deb-staging/DEBIAN/control << 'EOF'
+          ARCH=$(dpkg-architecture -qDEB_HOST_ARCH)
+          cat > deb-staging/DEBIAN/control << EOF
           Package: proxifier
           Version: 1.0-1
           Section: net
           Priority: optional
-          Architecture: amd64
+          Architecture: ${ARCH}
           Depends: iptables, libc6 (>= 2.31)
           Maintainer: Built from https://github.com/m0hithreddy/Proxifier-For-Linux
           Description: Proxifier for Linux - tunnel system traffic through proxy
@@ -82,6 +94,17 @@ jobs:
            Currently supports HTTP_PROXY.
           Homepage: https://github.com/m0hithreddy/Proxifier-For-Linux
           EOF
+
+      - name: Validate package
+        run: |
+          echo "=== Control file ==="
+          cat deb-staging/DEBIAN/control
+          echo ""
+          echo "=== Service file ==="
+          cat deb-staging/lib/systemd/system/proxifier.service
+          echo ""
+          echo "=== Files ==="
+          find deb-staging -type f | sort
 
       - name: Create maintainer scripts
         run: |
@@ -136,17 +159,18 @@ jobs:
 
       - name: Build .deb
         run: |
-          dpkg-deb --build deb-staging proxifier_1.0-1_amd64.deb
+          ARCH=$(dpkg-architecture -qDEB_HOST_ARCH)
+          dpkg-deb --build deb-staging "proxifier_1.0-1_${ARCH}.deb"
 
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
         with:
           name: proxifier-deb
-          path: proxifier_1.0-1_amd64.deb
+          path: proxifier_1.0-1_*.deb
           retention-days: 90
 
       - name: Show .deb info
         run: |
-          ls -lh proxifier_1.0-1_amd64.deb
-          dpkg-deb --info proxifier_1.0-1_amd64.deb
-          dpkg-deb --contents proxifier_1.0-1_amd64.deb
+          ls -lh proxifier_1.0-1_*.deb
+          dpkg-deb --info proxifier_1.0-1_*.deb
+          dpkg-deb --contents proxifier_1.0-1_*.deb
