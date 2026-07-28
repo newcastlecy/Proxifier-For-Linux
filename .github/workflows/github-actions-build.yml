@@ -75,24 +75,24 @@ jobs:
           ARCH=$(dpkg-architecture -qDEB_HOST_ARCH)
           # Calculate installed size in KB
           SIZE=$(du -sk deb-staging | cut -f1)
-          cat > deb-staging/DEBIAN/control << ENDOFCONTROL
-Package: proxifier
-Version: 1.0-1
-Section: net
-Priority: optional
-Architecture: ${ARCH}
-Installed-Size: ${SIZE}
-Depends: iptables, libc6 (>= 2.31)
-Maintainer: Proxifier-For-Linux <noreply@github.com>
-Description: Proxifier for Linux - tunnel system traffic through proxy
- Proxifier acts as an intermediate between proxy servers and client
- programs. It works through the proxy servers on behalf of other
- programs, acting as a global point for configuring proxy rules which
- will be applied to every program in the system.
- .
- Currently supports HTTP_PROXY.
-Homepage: https://github.com/m0hithreddy/Proxifier-For-Linux
-ENDOFCONTROL
+          {
+            echo "Package: proxifier"
+            echo "Version: 1.0-1"
+            echo "Section: net"
+            echo "Priority: optional"
+            echo "Architecture: ${ARCH}"
+            echo "Installed-Size: ${SIZE}"
+            echo "Depends: iptables, libc6 (>= 2.31)"
+            echo "Maintainer: Proxifier-For-Linux <noreply@github.com>"
+            echo "Description: Proxifier for Linux - tunnel system traffic through proxy"
+            echo " Proxifier acts as an intermediate between proxy servers and client"
+            echo " programs. It works through the proxy servers on behalf of other"
+            echo " programs, acting as a global point for configuring proxy rules which"
+            echo " will be applied to every program in the system."
+            echo " ."
+            echo " Currently supports HTTP_PROXY."
+            echo "Homepage: https://github.com/m0hithreddy/Proxifier-For-Linux"
+          } > deb-staging/DEBIAN/control
 
       - name: Validate package
         run: |
@@ -107,41 +107,13 @@ ENDOFCONTROL
 
       - name: Create maintainer scripts and metadata
         run: |
-          cat > deb-staging/DEBIAN/postinst << 'ENDOFSCRIPT'
-#!/bin/bash
-set -e
-if [ "$1" = "configure" ]; then
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload
-    fi
-fi
-exit 0
-ENDOFSCRIPT
+          printf '%s\n' '#!/bin/bash' 'set -e' 'if [ "$1" = "configure" ]; then' '    if command -v systemctl >/dev/null 2>&1; then' '        systemctl daemon-reload' '    fi' 'fi' 'exit 0' > deb-staging/DEBIAN/postinst
           chmod 755 deb-staging/DEBIAN/postinst
 
-          cat > deb-staging/DEBIAN/prerm << 'ENDOFSCRIPT'
-#!/bin/bash
-set -e
-if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl stop proxifier 2>/dev/null || true
-        systemctl disable proxifier 2>/dev/null || true
-    fi
-fi
-exit 0
-ENDOFSCRIPT
+          printf '%s\n' '#!/bin/bash' 'set -e' 'if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then' '    if command -v systemctl >/dev/null 2>&1; then' '        systemctl stop proxifier 2>/dev/null || true' '        systemctl disable proxifier 2>/dev/null || true' '    fi' 'fi' 'exit 0' > deb-staging/DEBIAN/prerm
           chmod 755 deb-staging/DEBIAN/prerm
 
-          cat > deb-staging/DEBIAN/postrm << 'ENDOFSCRIPT'
-#!/bin/bash
-set -e
-if [ "$1" = "remove" ]; then
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload
-    fi
-fi
-exit 0
-ENDOFSCRIPT
+          printf '%s\n' '#!/bin/bash' 'set -e' 'if [ "$1" = "remove" ]; then' '    if command -v systemctl >/dev/null 2>&1; then' '        systemctl daemon-reload' '    fi' 'fi' 'exit 0' > deb-staging/DEBIAN/postrm
           chmod 755 deb-staging/DEBIAN/postrm
 
           echo "/etc/proxifier.conf" > deb-staging/DEBIAN/conffiles
